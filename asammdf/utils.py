@@ -8,7 +8,7 @@ import logging
 import string
 import xml.etree.ElementTree as ET
 
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 from random import randint
 from struct import Struct
 from warnings import warn
@@ -792,13 +792,18 @@ def count_channel_groups(stream, include_channels=False):
                 '"{}" is not a valid MDF file'.format(stream.name)
             )
 
+    mapping = OrderedDict()
+    dg_count = 0
+    
     if version >= 4:
         stream.seek(88, 0)
         dg_addr = UINT64_u(stream.read(8))[0]
         while dg_addr:
+            mapping[dg_addr] = []
             stream.seek(dg_addr + 32)
             cg_addr = UINT64_u(stream.read(8))[0]
             while cg_addr:
+                mapping[dg_addr].append((dg_count, count, cg_addr))
                 count += 1
                 if include_channels:
                     stream.seek(cg_addr + 32)
@@ -812,14 +817,17 @@ def count_channel_groups(stream, include_channels=False):
 
             stream.seek(dg_addr + 24)
             dg_addr = UINT64_u(stream.read(8))[0]
+            dg_count += 1
 
     else:
         stream.seek(68, 0)
         dg_addr = UINT32_u(stream.read(4))[0]
         while dg_addr:
+            mapping[dg_addr] = []
             stream.seek(dg_addr + 8)
             cg_addr = UINT32_u(stream.read(4))[0]
             while cg_addr:
+                mapping[dg_addr].append.append((dg_count, count, cg_addr))
                 count += 1
                 if include_channels:
                     stream.seek(cg_addr + 8)
@@ -833,8 +841,9 @@ def count_channel_groups(stream, include_channels=False):
 
             stream.seek(dg_addr + 4)
             dg_addr = UINT32_u(stream.read(4))[0]
+            dg_count += 1
 
-    return count, ch_count
+    return count, ch_count, mapping
 
 
 def validate_memory_argument(memory):

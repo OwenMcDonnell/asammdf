@@ -315,12 +315,22 @@ class MDF4(object):
             logger.warning(message)
 
     def _read(self):
+        
+        from multiprocessing.dummy import Pool as ThreadPool
+        threads = 4
+        self._fhd = [
+            open(self.name, 'rb')
+            for i in range(threads)
+        ]
+        pool = ThreadPool(threads)
 
         stream = self._file
         memory = self.memory
         dg_cntr = 0
 
-        cg_count, _ = count_channel_groups(stream)
+        cg_count, _, mapping = count_channel_groups(stream)
+        
+        
         if self._callback:
             self._callback(0, cg_count)
         current_cg_index = 0
@@ -353,159 +363,32 @@ class MDF4(object):
 
         # go to first date group and read each data group sequentially
         dg_addr = self.header["first_dg_addr"]
+        
+        self.cg_size = [
+            {}
+            for _ in mapping
+        ]
 
+        data_groups = [
+            DataGroup(address=dg_addr, stream=stream)
+            for dg_addr in mapping
+        ]
+        
+        args = [
+            (grp, data_group_index, cntr, address)
+            for grp, cgs in zip(data_groups, mapping.values()):
+            for data_group_index, cntr, address in cgs
+        ]
+            
+        groups = pool.map(self._read_channel_group, args)
+        pool.close()
+        pool.join()
+        
+        self.groups = [group[-1] for group in groups]
+        
+        
+    
         while dg_addr:
-            new_groups = []
-            group = DataGroup(address=dg_addr, stream=stream)
-            record_id_nr = group["record_id_len"]
-
-            # go to first channel group of the current data group
-            cg_addr = group["first_cg_addr"]
-
-            cg_nr = 0
-
-            cg_size = {}
-
-            while cg_addr:
-                cg_nr += 1
-
-                grp = {}
-
-                grp["channels"] = []
-                grp["logging_channels"] = []
-                grp["data_block"] = None
-                grp["channel_dependencies"] = []
-                grp["signal_data"] = []
-                grp["reduction_blocks"] = []
-                grp["reduction_data_block"] = []
-                if memory == "minimum" and not self._skip_record_preparation:
-                    grp["temp_channels"] = []
-
-                # read each channel group sequentially
-                block = ChannelGroup(address=cg_addr, stream=stream)
-                self._cg_map[cg_addr] = dg_cntr
-                channel_group = grp["channel_group"] = block
-
-                grp["record_size"] = cg_size
-
-                if channel_group["flags"] & v4c.FLAG_CG_VLSD:
-                    # VLDS flag
-                    record_id = channel_group["record_id"]
-                    cg_size[record_id] = 0
-                elif channel_group["flags"] & v4c.FLAG_CG_BUS_EVENT:
-                    bus_type = channel_group.acq_source["bus_type"]
-                    if bus_type == v4c.BUS_TYPE_CAN:
-                        grp["CAN_logging"] = True
-                        message_name = channel_group.acq_name
-
-                        comment = channel_group.acq_source.comment.replace(
-                            ' xmlns="http://www.asam.net/mdf/v4"', ""
-                        )
-                        comment_xml = ET.fromstring(comment)
-                        common_properties = comment_xml.find(".//common_properties")
-                        for e in common_properties:
-                            name = e.get("name")
-                            if name == "ChannelNo":
-                                grp["CAN_id"] = "CAN{}".format(e.text)
-                                break
-
-                        if message_name == "CAN_DataFrame":
-                            # this is a raw CAN bus logging channel group
-                            # it will be later processed to extract all
-                            # signals to new groups (one group per CAN message)
-                            grp["raw_can"] = True
-
-                        elif message_name in ("CAN_ErrorFrame", "CAN_RemoteFrame"):
-                            # for now ignore bus logging flag
-                            pass
-                        else:
-                            comment = channel_group.comment.replace(
-                                ' xmlns="http://www.asam.net/mdf/v4"', ""
-                            )
-                            if comment:
-
-                                comment_xml = ET.fromstring(comment)
-                                can_msg_type = comment_xml.find(".//TX").text
-                                if can_msg_type is not None:
-                                    can_msg_type = can_msg_type.strip(" \t\r\n")
-                                else:
-                                    can_msg_type = "CAN_DataFrame"
-                                if can_msg_type == "CAN_DataFrame":
-                                    common_properties = comment_xml.find(
-                                        ".//common_properties"
-                                    )
-                                    message_id = -1
-                                    for e in common_properties:
-                                        name = e.get("name")
-                                        if name == "MessageID":
-                                            message_id = int(e.text)
-                                            break
-
-                                    if message_id > 0:
-                                        if message_id > 0x80000000:
-                                            message_id -= 0x80000000
-                                            grp["extended_id"] = True
-                                        else:
-                                            grp["extended_id"] = False
-                                        grp["message_name"] = message_name
-                                        grp["message_id"] = message_id
-
-                                else:
-                                    message = "Invalid bus logging channel group metadata: {}".format(
-                                        comment
-                                    )
-                                    logger.warning(message)
-                            else:
-                                message = "Unable to get CAN message information since channel group @{} has no metadata".format(
-                                    hex(channel_group.address)
-                                )
-                                logger.warning(message)
-                    else:
-                        # only CAN bus logging is supported
-                        pass
-                    samples_size = channel_group["samples_byte_nr"]
-                    inval_size = channel_group["invalidation_bytes_nr"]
-                    record_id = channel_group["record_id"]
-                    cg_size[record_id] = samples_size + inval_size
-                else:
-
-                    samples_size = channel_group["samples_byte_nr"]
-                    inval_size = channel_group["invalidation_bytes_nr"]
-                    record_id = channel_group["record_id"]
-                    cg_size[record_id] = samples_size + inval_size
-
-                if record_id_nr:
-                    grp["sorted"] = False
-                else:
-                    grp["sorted"] = True
-
-                data_group = DataGroup(address=dg_addr, stream=stream)
-                grp["data_group"] = data_group
-
-                # go to first channel of the current channel group
-                ch_addr = channel_group["first_ch_addr"]
-                ch_cntr = 0
-                neg_ch_cntr = -1
-
-                # Read channels by walking recursively in the channel group
-                # starting from the first channel
-                self._read_channels(ch_addr, grp, stream, dg_cntr, ch_cntr, neg_ch_cntr)
-
-                if memory == "minimum" and not self._skip_record_preparation:
-                    grp["parents"], grp["types"] = self._prepare_record(grp)
-                    del grp["temp_channels"]
-
-                cg_addr = channel_group["next_cg_addr"]
-                dg_cntr += 1
-
-                current_cg_index += 1
-                if self._callback:
-                    self._callback(current_cg_index, cg_count)
-
-                if self._terminate:
-                    self.close()
-                    return
-
                 new_groups.append(grp)
 
             # store channel groups record sizes dict in each
@@ -913,6 +796,136 @@ class MDF4(object):
         self._master_channel_cache.clear()
 
         self.progress = cg_count, cg_count
+        
+    def _read_channel_group(self, group, data_group_index, dg_cntr, cg_addr):
+        threads = 4
+        stream = self._fhd[dg_cntr % threads]
+        record_id_nr = group["record_id_len"]
+        grp = {}
+        grp["channels"] = []
+        grp["logging_channels"] = []
+        grp["data_block"] = None
+        grp["channel_dependencies"] = []
+        grp["signal_data"] = []
+        grp["reduction_blocks"] = []
+        grp["reduction_data_block"] = []
+        if memory == "minimum" and not self._skip_record_preparation:
+            grp["temp_channels"] = []
+
+        # read each channel group sequentially
+        block = ChannelGroup(address=cg_addr, stream=stream)
+        self._cg_map[cg_addr] = dg_cntr
+        channel_group = grp["channel_group"] = block
+
+        grp["record_size"] = cg_size = self.cg_size[data_group_index]
+
+        if channel_group["flags"] & v4c.FLAG_CG_VLSD:
+            # VLDS flag
+            record_id = channel_group["record_id"]
+            cg_size[record_id] = 0
+        elif channel_group["flags"] & v4c.FLAG_CG_BUS_EVENT:
+            bus_type = channel_group.acq_source["bus_type"]
+            if bus_type == v4c.BUS_TYPE_CAN:
+                grp["CAN_logging"] = True
+                message_name = channel_group.acq_name
+
+                comment = channel_group.acq_source.comment.replace(
+                    ' xmlns="http://www.asam.net/mdf/v4"', ""
+                )
+                comment_xml = ET.fromstring(comment)
+                common_properties = comment_xml.find(".//common_properties")
+                for e in common_properties:
+                    name = e.get("name")
+                    if name == "ChannelNo":
+                        grp["CAN_id"] = "CAN{}".format(e.text)
+                        break
+
+                if message_name == "CAN_DataFrame":
+                    # this is a raw CAN bus logging channel group
+                    # it will be later processed to extract all
+                    # signals to new groups (one group per CAN message)
+                    grp["raw_can"] = True
+
+                elif message_name in ("CAN_ErrorFrame", "CAN_RemoteFrame"):
+                    # for now ignore bus logging flag
+                    pass
+                else:
+                    comment = channel_group.comment.replace(
+                        ' xmlns="http://www.asam.net/mdf/v4"', ""
+                    )
+                    if comment:
+
+                        comment_xml = ET.fromstring(comment)
+                        can_msg_type = comment_xml.find(".//TX").text
+                        if can_msg_type is not None:
+                            can_msg_type = can_msg_type.strip(" \t\r\n")
+                        else:
+                            can_msg_type = "CAN_DataFrame"
+                        if can_msg_type == "CAN_DataFrame":
+                            common_properties = comment_xml.find(
+                                ".//common_properties"
+                            )
+                            message_id = -1
+                            for e in common_properties:
+                                name = e.get("name")
+                                if name == "MessageID":
+                                    message_id = int(e.text)
+                                    break
+
+                            if message_id > 0:
+                                if message_id > 0x80000000:
+                                    message_id -= 0x80000000
+                                    grp["extended_id"] = True
+                                else:
+                                    grp["extended_id"] = False
+                                grp["message_name"] = message_name
+                                grp["message_id"] = message_id
+
+                        else:
+                            message = "Invalid bus logging channel group metadata: {}".format(
+                                comment
+                            )
+                            logger.warning(message)
+                    else:
+                        message = "Unable to get CAN message information since channel group @{} has no metadata".format(
+                            hex(channel_group.address)
+                        )
+                        logger.warning(message)
+            else:
+                # only CAN bus logging is supported
+                pass
+            samples_size = channel_group["samples_byte_nr"]
+            inval_size = channel_group["invalidation_bytes_nr"]
+            record_id = channel_group["record_id"]
+            cg_size[record_id] = samples_size + inval_size
+        else:
+
+            samples_size = channel_group["samples_byte_nr"]
+            inval_size = channel_group["invalidation_bytes_nr"]
+            record_id = channel_group["record_id"]
+            cg_size[record_id] = samples_size + inval_size
+
+        if record_id_nr:
+            grp["sorted"] = False
+        else:
+            grp["sorted"] = True
+
+        grp["data_group"] = group
+
+        # go to first channel of the current channel group
+        ch_addr = channel_group["first_ch_addr"]
+        ch_cntr = 0
+        neg_ch_cntr = -1
+
+        # Read channels by walking recursively in the channel group
+        # starting from the first channel
+        self._read_channels(ch_addr, grp, stream, dg_cntr, ch_cntr, neg_ch_cntr)
+
+        if memory == "minimum" and not self._skip_record_preparation:
+            grp["parents"], grp["types"] = self._prepare_record(grp)
+            del grp["temp_channels"]
+            
+        return (data_group_index, group.address, grp)
 
     def _read_channels(
         self,
