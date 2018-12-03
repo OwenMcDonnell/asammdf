@@ -827,7 +827,7 @@ def count_channel_groups(stream, include_channels=False):
             stream.seek(dg_addr + 8)
             cg_addr = UINT32_u(stream.read(4))[0]
             while cg_addr:
-                mapping[dg_addr].append.append((dg_count, count, cg_addr))
+                mapping[dg_addr].append((dg_count, count, cg_addr))
                 count += 1
                 if include_channels:
                     stream.seek(cg_addr + 8)

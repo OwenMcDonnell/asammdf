@@ -376,20 +376,30 @@ class MDF4(object):
         
         args = [
             (grp, data_group_index, cntr, address)
-            for grp, cgs in zip(data_groups, mapping.values()):
+            for grp, cgs in zip(data_groups, mapping.values())
             for data_group_index, cntr, address in cgs
         ]
             
-        groups = pool.map(self._read_channel_group, args)
+        groups = pool.starmap(self._read_channel_group, args)
         pool.close()
         pool.join()
         
+        [f.close() for f in self._fhd if self._fhd]
+        
         self.groups = [group[-1] for group in groups]
+        idx = [group[0] for group in groups]
         
-        
-    
-        while dg_addr:
-                new_groups.append(grp)
+        for i, group in enumerate(data_groups):
+            
+            cg_size = self.cg_size[i]
+            
+            new_groups = [
+                grp
+                for index, grp in zip(idx, self.groups)
+                if index == i
+            ]
+            
+            record_id_nr = group["record_id_len"]
 
             # store channel groups record sizes dict in each
             # new group data belong to the initial unsorted group, and add
@@ -397,10 +407,12 @@ class MDF4(object):
             # this is used later if memory is 'low' or 'minimum'
 
             if memory == "full":
-                grp["data_location"] = v4c.LOCATION_MEMORY
+                for grp in new_groups:
+                    grp["data_location"] = v4c.LOCATION_MEMORY
                 dat_addr = group["data_block_addr"]
 
                 if record_id_nr == 0:
+                    channel_group = new_groups[0]['channel_group']
                     size = channel_group["samples_byte_nr"]
                     size += channel_group["invalidation_bytes_nr"]
                     size *= channel_group["cycles_nr"]
@@ -493,45 +505,44 @@ class MDF4(object):
                     grp["data_location"] = v4c.LOCATION_ORIGINAL_FILE
                     grp.update(info)
 
-            # sample reduction blocks
-            if memory == "full":
-                addr = grp["channel_group"]["first_sample_reduction_addr"]
-                while addr:
-                    reduction_block = SampleReductionBlock(address=addr, stream=stream)
-                    address = reduction_block["data_block_addr"]
+#            # sample reduction blocks
+#            if memory == "full":
+#                addr = grp["channel_group"]["first_sample_reduction_addr"]
+#                while addr:
+#                    reduction_block = SampleReductionBlock(address=addr, stream=stream)
+#                    address = reduction_block["data_block_addr"]
+#
+#                    grp["reduction_blocks"].append(reduction_block)
+#
+#                    data = self._read_data_block(
+#                        address=address, stream=stream, size=size
+#                    )
+#
+#                    data = next(data)
+#
+#                    grp["reduction_data_block"].append(DataBlock(data=data, type="RD"))
+#
+#                    addr = reduction_block["next_sr_addr"]
+#            else:
+#                addr = grp["channel_group"]["first_sample_reduction_addr"]
+#
+#                while addr:
+#
+#                    reduction_block = SampleReductionBlock(address=addr, stream=stream)
+#                    address = reduction_block["data_block_addr"]
+#
+#                    grp["reduction_blocks"].append(reduction_block)
+#
+#                    grp["reduction_data_block"].append(
+#                        self._get_data_blocks_info(
+#                            address=address, stream=stream, block_type=b"##RD"
+#                        )
+#                    )
+#
+#                    addr = reduction_block["next_sr_addr"]
+#
+#            self.groups.extend(new_groups)
 
-                    grp["reduction_blocks"].append(reduction_block)
-
-                    data = self._read_data_block(
-                        address=address, stream=stream, size=size
-                    )
-
-                    data = next(data)
-
-                    grp["reduction_data_block"].append(DataBlock(data=data, type="RD"))
-
-                    addr = reduction_block["next_sr_addr"]
-            else:
-                addr = grp["channel_group"]["first_sample_reduction_addr"]
-
-                while addr:
-
-                    reduction_block = SampleReductionBlock(address=addr, stream=stream)
-                    address = reduction_block["data_block_addr"]
-
-                    grp["reduction_blocks"].append(reduction_block)
-
-                    grp["reduction_data_block"].append(
-                        self._get_data_blocks_info(
-                            address=address, stream=stream, block_type=b"##RD"
-                        )
-                    )
-
-                    addr = reduction_block["next_sr_addr"]
-
-            self.groups.extend(new_groups)
-
-            dg_addr = group["next_dg_addr"]
 
         # all channels have been loaded so now we can link the
         # channel dependencies and load the signal data for VLSD channels
@@ -798,6 +809,8 @@ class MDF4(object):
         self.progress = cg_count, cg_count
         
     def _read_channel_group(self, group, data_group_index, dg_cntr, cg_addr):
+        print(dg_cntr, hex(cg_addr))
+        memory = self.memory
         threads = 4
         stream = self._fhd[dg_cntr % threads]
         record_id_nr = group["record_id_len"]
