@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
 """ asammdf version module """
 
-__version__ = '2.8.0'
-
+__version__ = "5.0.0.dev0"

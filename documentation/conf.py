@@ -18,16 +18,19 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import os
-# import sys
-# sys.path.insert(0, os.path.abspath('.'))
+import sys
+BASE_DIR = os.path.abspath('..')
+sys.path.insert(0, BASE_DIR)
 
 with open(os.path.join('..', 'asammdf', 'version.py'), 'r') as f:
     for line in f:
         if line.startswith('__version__'):
             asam_version = line.split('=')[-1].strip().strip("'")
             break
-            
+
 print('version', asam_version)
+
+html_theme = "sphinx_rtd_theme"
 
 
 # -- General configuration ------------------------------------------------
@@ -43,9 +46,16 @@ extensions = ['sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.imgmath',
     'sphinx.ext.githubpages',
+    'sphinx.ext.viewcode',
     'matplotlib.sphinxext.plot_directive',
     'sphinxarg.ext',
-	'numpydoc']
+    'numpydoc']
+    
+# silence the Sphinx warnings about
+# "WARNING: toctree contains reference to nonexisting document"
+# http://stackoverflow.com/questions/12206334/sphinx-autosummary-toctree-contains-reference-to-nonexisting-document-warnings
+numpydoc_show_class_members = False
+#numpydoc_class_members_toctree = False
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -61,7 +71,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'asammdf'
-copyright = '2017, Daniel Hrisca'
+copyright = '2018, Daniel Hrisca'
 author = 'Daniel Hrisca'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -97,24 +107,25 @@ todo_include_todos = False
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'classic'
+#html_theme = 'classic'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-# html_theme_options = {}
+#html_theme_options = {'stickysidebar': 'true'}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
+# html_static_path = ['_static']
+html_logo = '../asammdf.png'
 
 
 # -- Options for HTMLHelp output ------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'asammdfdoc'
+#htmlhelp_basename = 'asammdfdoc'
 
 
 # -- Options for LaTeX output ---------------------------------------------
