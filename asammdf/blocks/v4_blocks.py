@@ -138,6 +138,7 @@ class AttachmentBlock:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 (
@@ -188,9 +189,9 @@ class AttachmentBlock:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.file_name = get_text_v4(self.file_name_addr, stream, mapped=mapped)
-            self.mime = get_text_v4(self.mime_addr, stream, mapped=mapped)
-            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped)
+            self.file_name = get_text_v4(self.file_name_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            self.mime = get_text_v4(self.mime_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped, all_blocks=all_blocks)
 
         except KeyError:
 
@@ -466,6 +467,7 @@ class Channel:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get('mapped', False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
 
@@ -569,9 +571,9 @@ class Channel:
                         self.upper_ext_limit,
                     ) = params
 
-                self.name = get_text_v4(self.name_addr, stream, mapped=mapped)
-                self.unit = get_text_v4(self.unit_addr, stream, mapped=mapped)
-                self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped)
+                self.name = get_text_v4(self.name_addr, stream, mapped=mapped, all_blocks=all_blocks)
+                self.unit = get_text_v4(self.unit_addr, stream, mapped=mapped, all_blocks=all_blocks)
+                self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped, all_blocks=all_blocks)
 
                 if kwargs.get("use_display_names", True):
                     try:
@@ -604,6 +606,7 @@ class Channel:
                         conv = ChannelConversion(
                             raw_bytes=raw_bytes, stream=stream, address=address,
                             mapped=mapped,
+                            all_blocks=all_blocks
                         )
                         cc_map[raw_bytes] = conv
                     self.conversion = conv
@@ -623,12 +626,16 @@ class Channel:
                         source = SourceInformation(
                             raw_bytes=raw_bytes, stream=stream, address=address,
                             mapped=mapped,
+                            all_blocks=all_blocks,
                         )
                         si_map[raw_bytes] = source
                     self.source = source
                 else:
                     self.source = None
                 self.dtype_fmt = self.attachment = None
+
+                if all_blocks:
+                    all_blocks.add((self.address, self.id, self.block_len))
             else:
                 stream.seek(address)
 
@@ -1146,6 +1153,7 @@ class ChannelArrayBlock(_ChannelArrayBlockBase):
         try:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
+            all_blocks = kwargs['all_blocks']
 
             mapped = kwargs.get("mapped", False)
 
@@ -1262,6 +1270,8 @@ class ChannelArrayBlock(_ChannelArrayBlockBase):
                         for j in range(self[f"dim_size_{i}"]):
                             (value,) = FLOAT64_u(stream.read(8))
                             self[f"axis_{i}_value_{j}"] = value
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         except KeyError:
             self.id = b"##CA"
@@ -1503,6 +1513,7 @@ class ChannelGroup:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 (
@@ -1554,15 +1565,19 @@ class ChannelGroup:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.acq_name = get_text_v4(self.acq_name_addr, stream, mapped=mapped)
-            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped)
+            self.acq_name = get_text_v4(self.acq_name_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped, all_blocks=all_blocks)
 
             if self.acq_source_addr:
                 self.acq_source = SourceInformation(
-                    address=self.acq_source_addr, stream=stream, mapped=mapped
+                    address=self.acq_source_addr, stream=stream, mapped=mapped, all_blocks=all_blocks
                 )
 
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
+
         except KeyError:
+            raise
             self.address = 0
             self.id = b"##CG"
             self.reserved0 = kwargs.get("reserved0", 0)
@@ -1847,6 +1862,7 @@ class ChannelConversion(_ChannelConversionBase):
 
         if "stream" in kwargs:
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             stream = kwargs["stream"]
             try:
@@ -2118,16 +2134,16 @@ class ChannelConversion(_ChannelConversionBase):
                     self.max_phy_value,
                 ) = unpack_from("<2B3H2d", block, 32 + links_nr * 8)
 
-            self.name = get_text_v4(self.name_addr, stream, mapped=mapped)
-            self.unit = get_text_v4(self.unit_addr, stream, mapped=mapped)
-            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped)
+            self.name = get_text_v4(self.name_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            self.unit = get_text_v4(self.unit_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped, all_blocks=all_blocks)
             self.formula = ""
             self.referenced_blocks = None
 
             conv_type = conv
 
             if conv_type == v4c.CONVERSION_TYPE_ALG:
-                self.formula = get_text_v4(self.formula_addr, stream, mapped=mapped)
+                self.formula = get_text_v4(self.formula_addr, stream, mapped=mapped, all_blocks=all_blocks)
 
             elif conv_type in v4c.TABULAR_CONVERSIONS:
                 refs = self.referenced_blocks = {}
@@ -2142,10 +2158,10 @@ class ChannelConversion(_ChannelConversionBase):
                         _id = stream.read(4)
 
                         if _id == b'##TX':
-                            block = TextBlock(address=address, stream=stream, mapped=mapped)
+                            block = TextBlock(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                             refs[f"text_{i}"] = block
                         elif _id == b'##CC':
-                            block = ChannelConversion(address=address, stream=stream, mapped=mapped)
+                            block = ChannelConversion(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                             refs[f"text_{i}"] = block
                         else:
                             message = f'Expected "##TX" or "##CC" block @{hex(address)} but found "{_id}"'
@@ -2161,10 +2177,10 @@ class ChannelConversion(_ChannelConversionBase):
                         _id = stream.read(4)
 
                         if _id == b'##TX':
-                            block = TextBlock(address=address, stream=stream, mapped=mapped)
+                            block = TextBlock(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                             refs["default_addr"] = block
                         elif _id == b'##CC':
-                            block = ChannelConversion(address=address, stream=stream, mapped=mapped)
+                            block = ChannelConversion(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                             refs["default_addr"] = block
                         else:
                             message = f'Expected "##TX" or "##CC" block @{hex(address)} but found "{_id}"'
@@ -2180,14 +2196,17 @@ class ChannelConversion(_ChannelConversionBase):
                     for key in (f"input_{i}_addr", f"output_{i}_addr"):
                         address = self[key]
                         if address:
-                            block = TextBlock(address=address, stream=stream, mapped=mapped)
+                            block = TextBlock(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                             refs[key] = block
                 address = self.default_addr
                 if address:
-                    block = TextBlock(address=address, stream=stream, mapped=mapped)
+                    block = TextBlock(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                     refs["default_addr"] = block
                 else:
                     refs["default_addr"] = None
+
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         else:
 
@@ -3211,6 +3230,7 @@ class DataBlock:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 (self.id, self.reserved0, self.block_len, self.links_nr) = COMMON_uf(
@@ -3236,6 +3256,9 @@ class DataBlock:
                     raise MdfException(message)
 
                 self.data = stream.read(self.block_len - COMMON_SIZE)
+
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         except KeyError:
             self.address = 0
@@ -3505,6 +3528,7 @@ class DataGroup:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 stream.seek(address)
@@ -3544,7 +3568,9 @@ class DataGroup:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped)
+            self.comment = get_text_v4(self.comment_addr, stream, mapped=mapped, all_blocks=all_blocks)
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         except KeyError:
 
@@ -3677,6 +3703,7 @@ class DataList(_DataListBase):
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 (self.id, self.reserved0, self.block_len, self.links_nr) = COMMON_uf(
@@ -3879,6 +3906,7 @@ class EventBlock(_EventBlockBase):
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             stream.seek(address)
+            all_blocks = kwargs['all_blocks']
 
             (self.id, self.reserved0, self.block_len, self.links_nr) = COMMON_u(
                 stream.read(COMMON_SIZE)
@@ -4166,6 +4194,7 @@ class FileHistory:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             stream.seek(address)
+            all_blocks = kwargs['all_blocks']
 
             (
                 self.id,
@@ -4187,7 +4216,9 @@ class FileHistory:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.comment = get_text_v4(address=self.comment_addr, stream=stream)
+            self.comment = get_text_v4(address=self.comment_addr, stream=stream, all_blocks=all_blocks)
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         except KeyError:
             self.id = b"##FH"
@@ -4316,6 +4347,7 @@ class HeaderBlock:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             stream.seek(address)
+            all_blocks = kwargs['all_blocks']
 
             (
                 self.id,
@@ -4345,7 +4377,7 @@ class HeaderBlock:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.comment = get_text_v4(address=self.comment_addr, stream=stream)
+            self.comment = get_text_v4(address=self.comment_addr, stream=stream, all_blocks=all_blocks)
 
         except KeyError:
 
@@ -4557,6 +4589,7 @@ class HeaderList:
             self.address = address = kwargs["address"]
             stream = kwargs["stream"]
             stream.seek(address)
+            all_blocks = kwargs['all_blocks']
 
             (
                 self.id,
@@ -4652,6 +4685,8 @@ class SourceInformation:
 
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
+            all_blocks = kwargs['all_blocks']
+
             try:
                 block = kwargs["raw_bytes"]
                 self.address = kwargs.get("address", 0)
@@ -4680,9 +4715,12 @@ class SourceInformation:
                 logger.exception(message)
                 raise MdfException(message)
 
-            self.name = get_text_v4(address=self.name_addr, stream=stream, mapped=mapped)
-            self.path = get_text_v4(address=self.path_addr, stream=stream, mapped=mapped)
-            self.comment = get_text_v4(address=self.comment_addr, stream=stream, mapped=mapped)
+            self.name = get_text_v4(address=self.name_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
+            self.path = get_text_v4(address=self.path_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
+            self.comment = get_text_v4(address=self.comment_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
+
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
 
         else:
             self.address = 0
@@ -4861,6 +4899,7 @@ class TextBlock:
             stream = kwargs["stream"]
             mapped = kwargs.get("mapped", False)
             self.address = address = kwargs["address"]
+            all_blocks = kwargs['all_blocks']
 
             if mapped:
                 (self.id, self.reserved0, self.block_len, self.links_nr) = COMMON_uf(
@@ -4901,6 +4940,9 @@ class TextBlock:
                 else:
                     self.block_len += 8
 
+            if all_blocks:
+                all_blocks.add((self.address, self.id, self.block_len))
+
         else:
 
             self.address = 0
@@ -4939,3 +4981,71 @@ class TextBlock:
             f"links_nr={self.links_nr} "
             f"text={self.text})"
         )
+
+
+class TreeInfo:
+
+    def __init__(self, stream, mapped=False):
+        self.blocks = sorted(self._read(64, stream, mapped, {0}))
+
+    def _read(self, address, stream, mapped, db):
+#        print(hex(address))
+        if address in db:
+            return []
+        else:
+            db.add(address)
+
+        blocks = []
+
+        if mapped:
+            (id_, reserved0, block_len, links_nr) = COMMON_uf(
+                stream, address
+            )
+
+            blocks.append((address, id_, block_len))
+
+
+            links = unpack_from(f'<{links_nr}Q', stream, address+COMMON_SIZE)
+
+            for link in links:
+                if not link:
+                    continue
+                blocks.extend(self._read(link, stream, mapped, db))
+
+        else:
+            stream.seek(address)
+
+            (id_, reserved0, block_len, links_nr) = COMMON_u(stream.read(COMMON_SIZE))
+
+            blocks.append((address, id_, block_len))
+
+            links = unpack(f'<{links_nr}Q', stream.read(8*links_nr))
+
+            for link in links:
+                if not link:
+                    continue
+                blocks.extend(self._read(link, stream, mapped, db))
+
+        return blocks
+
+class AllBlocks:
+
+    def __init__(self):
+        self.blocks = []
+        self.map = set()
+        self.cntr = 0
+
+    def add(self, entry):
+        self.cntr += 1
+        address = entry[0]
+        if address in self.map:
+            return
+        else:
+            self.map.add(address)
+            self.blocks.append(entry)
+
+    def __len__(self):
+        return len(self.blocks)
+
+    def __bool__(self):
+        return bool(len(self))

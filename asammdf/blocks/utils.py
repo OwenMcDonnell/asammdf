@@ -219,7 +219,7 @@ def get_text_v3(address, stream, mapped=False):
     return text
 
 
-def get_text_v4(address, stream, mapped=False):
+def get_text_v4(address, stream, mapped=False, all_blocks=None):
     """ faster way to extract strings from mdf version 4 TextBlock
 
     Parameters
@@ -246,6 +246,8 @@ def get_text_v4(address, stream, mapped=False):
         stream.seek(address + 8)
         size, _ = TWO_UINT64_u(stream.read(16))
         text_bytes = stream.read(size - 24)
+    if all_blocks:
+        all_blocks.add((address, b'##TX', size))
     try:
         text = text_bytes.strip(b" \r\t\n\0").decode("utf-8")
     except UnicodeDecodeError as err:

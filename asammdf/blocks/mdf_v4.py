@@ -101,6 +101,7 @@ from .v4_blocks import (
     HeaderList,
     SourceInformation,
     TextBlock,
+    AllBlocks,
 )
 from ..version import __version__
 
@@ -306,6 +307,9 @@ class MDF4(object):
             logger.warning(message)
 
     def _read(self, mapped=False):
+        print('read tigane')
+
+        all_blocks = AllBlocks()
 
         stream = self._file
         dg_cntr = 0
@@ -322,12 +326,20 @@ class MDF4(object):
         if self.version >= "4.10":
             self._check_finalised()
 
-        self.header = HeaderBlock(address=0x40, stream=stream, mapped=mapped)
+        self.header = HeaderBlock(address=0x40, stream=stream, mapped=mapped, all_blocks=all_blocks)
+
+        all_blocks.add((self.identification.address, b'', 64))
+        all_blocks.add((self.header.address, self.header.id, self.header.block_len))
+
+        unfin_flags = self.identification.unfinalized_standard_flags
+
+        if not unfin_flags:
+            all_blocks = None
 
         # read file history
         fh_addr = self.header["file_history_addr"]
         while fh_addr:
-            history_block = FileHistory(address=fh_addr, stream=stream, mapped=mapped)
+            history_block = FileHistory(address=fh_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
             self.file_history.append(history_block)
             fh_addr = history_block.next_fh_addr
 
@@ -335,7 +347,7 @@ class MDF4(object):
         at_addr = self.header["first_attachment_addr"]
         index = 0
         while at_addr:
-            at_block = AttachmentBlock(address=at_addr, stream=stream, mapped=mapped)
+            at_block = AttachmentBlock(address=at_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
             self._attachments_map[at_addr] = index
             self.attachments.append(at_block)
             at_addr = at_block.next_at_addr
@@ -345,8 +357,9 @@ class MDF4(object):
         dg_addr = self.header.first_dg_addr
 
         while dg_addr:
+
             new_groups = []
-            group = DataGroup(address=dg_addr, stream=stream, mapped=mapped)
+            group = DataGroup(address=dg_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
             record_id_nr = group.record_id_len
 
             # go to first channel group of the current data group
@@ -362,7 +375,7 @@ class MDF4(object):
                 grp = Group(group.copy())
 
                 # read each channel group sequentially
-                block = ChannelGroup(address=cg_addr, stream=stream, mapped=mapped)
+                block = ChannelGroup(address=cg_addr, stream=stream, mapped=mapped, all_blocks=all_blocks)
                 self._cg_map[cg_addr] = dg_cntr
                 channel_group = grp.channel_group = block
 
@@ -402,7 +415,7 @@ class MDF4(object):
 
                 # Read channels by walking recursively in the channel group
                 # starting from the first channel
-                self._read_channels(ch_addr, grp, stream, dg_cntr, ch_cntr, mapped=mapped)
+                self._read_channels(ch_addr, grp, stream, dg_cntr, ch_cntr, mapped=mapped, all_blocks=all_blocks)
 
                 cg_addr = channel_group.next_cg_addr
                 dg_cntr += 1
@@ -424,7 +437,7 @@ class MDF4(object):
             address = group.data_block_addr
 
             info = self._get_data_blocks_info(
-                address=address, stream=stream, block_type=b"##DT", mapped=mapped
+                address=address, stream=stream, block_type=b"##DT", mapped=mapped, all_blocks=all_blocks,
             )
 
             for grp in new_groups:
@@ -671,6 +684,11 @@ class MDF4(object):
 
         self.progress = cg_count, cg_count
 
+        if all_blocks:
+            print('all blocks', len(all_blocks))
+        else:
+            print('all blocks', None)
+
     def _read_channels(
         self,
         ch_addr,
@@ -680,6 +698,7 @@ class MDF4(object):
         ch_cntr,
         channel_composition=False,
         mapped=False,
+        all_blocks=None,
     ):
 
         channels = grp.channels
@@ -701,6 +720,7 @@ class MDF4(object):
                 at_map=self._attachments_map,
                 use_display_names=self._use_display_names,
                 mapped=mapped,
+                all_blocks=all_blocks,
             )
 
             if self._remove_source_from_channel_names:
@@ -734,7 +754,7 @@ class MDF4(object):
                     index = ch_cntr - 1
                     dependencies.append(None)
                     ch_cntr, ret_composition, ret_composition_dtype = self._read_channels(
-                        component_addr, grp, stream, dg_cntr, ch_cntr, True, mapped=mapped
+                        component_addr, grp, stream, dg_cntr, ch_cntr, True, mapped=mapped, all_blocks=all_blocks,
                     )
                     dependencies[index] = ret_composition
 
@@ -745,7 +765,7 @@ class MDF4(object):
                     # only channel arrays with storage=CN_TEMPLATE are
                     # supported so far
                     ca_block = ChannelArrayBlock(
-                        address=component_addr, stream=stream, mapped=mapped
+                        address=component_addr, stream=stream, mapped=mapped, all_blocks=all_blocks,
                     )
                     if ca_block.storage != v4c.CA_STORAGE_TYPE_CN_TEMPLATE:
                         logger.warning("Only CN template arrays are supported")
@@ -755,6 +775,7 @@ class MDF4(object):
                             address=ca_block.composition_addr,
                             stream=stream,
                             mapped=mapped,
+                            all_blocks=all_blocks,
                         )
                         ca_list.append(ca_block)
                     dependencies.append(ca_list)
@@ -1921,12 +1942,15 @@ class MDF4(object):
     def _get_source_name(self, group, index):
         return self.groups[group].channels[index].source.name or ""
 
-    def _get_data_blocks_info(self, address, stream, block_type=b"##DT", mapped=False):
+    def _get_data_blocks_info(self, address, stream, block_type=b"##DT", mapped=False, all_blocks=None):
         info = []
 
         if mapped:
             if address:
                 id_string, _, block_len, __ = COMMON_uf(stream, address)
+
+                if all_blocks:
+                    all_blocks.add((address, id_string, block_len))
 
                 # can be a DataBlock
                 if id_string == block_type:
@@ -1977,11 +2001,13 @@ class MDF4(object):
                 # or a DataList
                 elif id_string == b"##DL":
                     while address:
-                        dl = DataList(address=address, stream=stream, mapped=mapped)
+                        dl = DataList(address=address, stream=stream, mapped=mapped, all_blocks=all_blocks)
                         for i in range(dl.data_block_nr):
                             addr = dl[f"data_block_addr{i}"]
 
                             id_string, _, block_len, __ = COMMON_uf(stream, addr)
+                            if all_blocks:
+                                all_blocks.add((addr, id_string, block_len))
                             # can be a DataBlock
                             if id_string == block_type:
                                 size = block_len - 24
